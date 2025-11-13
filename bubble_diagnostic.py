@@ -212,7 +212,7 @@ class BubbleDiagnostic:
         print(f"  Step: {step_days} days")
         
         # Convert to numerical time
-        time_numerical = (self.dates - self.dates[0]).dt.days.astype(float)
+        time_numerical = (self.dates - self.dates[0]).dt.days.astype(float).values
         log_prices = np.log(self.prices)
         
         results = []
@@ -229,8 +229,8 @@ class BubbleDiagnostic:
             total_windows += 1
             
             # Extract window
-            t_window = time_numerical[i:window_end_idx].values
-            p_window = log_prices[i:window_end_idx].values
+            t_window = time_numerical[i:window_end_idx]
+            p_window = log_prices[i:window_end_idx]
             date_window_end = self.dates[window_end_idx - 1]
 
             if len(t_window) < min_data_points:
