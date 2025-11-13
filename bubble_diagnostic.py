@@ -569,6 +569,120 @@ class BubbleDiagnostic:
         
         return fig
     
+    def plot_quantile_crash_dates(self, save_path=None, quantiles=[0.1, 0.25, 0.5, 0.75, 0.9]):
+        """
+        Plot quantile ranges of predicted crash dates over time
+        Based on Geraskin et al. - shows distribution of tc predictions
+
+        This visualization shows how the predicted crash date (tc) evolves over time
+        with uncertainty bands representing different quantiles of the predictions.
+
+        Args:
+            save_path: Path to save figure
+            quantiles: List of quantiles to plot (default: [0.1, 0.25, 0.5, 0.75, 0.9])
+        """
+        if len(self.results) == 0:
+            print("No results to plot. Run analyze() first.")
+            return
+
+        fig, ax = plt.subplots(figsize=(14, 8))
+
+        # For each window_end date, collect all tc predictions made up to that point
+        # This creates a forward-looking distribution of predicted crash dates
+        window_ends = sorted(self.results['window_end'].unique())
+
+        quantile_data = {q: [] for q in quantiles}
+        plot_dates = []
+
+        for window_date in window_ends:
+            # Get all predictions made up to this window_end
+            predictions = self.results[self.results['window_end'] <= window_date]
+
+            # Get tc_date predictions that are in the future relative to window_date
+            future_tc = predictions[predictions['tc_date'] > window_date]['tc_date']
+
+            if len(future_tc) >= 3:  # Need minimum predictions for quantiles
+                # Convert to days from window_date for quantile calculation
+                days_to_tc = [(tc - window_date).days for tc in future_tc]
+
+                # Calculate quantiles
+                quantile_values = np.percentile(days_to_tc, [q*100 for q in quantiles])
+
+                plot_dates.append(window_date)
+                for i, q in enumerate(quantiles):
+                    # Convert back to absolute dates
+                    tc_quantile = window_date + pd.Timedelta(days=float(quantile_values[i]))
+                    quantile_data[q].append(tc_quantile)
+
+        if len(plot_dates) == 0:
+            print("Not enough data to plot quantiles")
+            return
+
+        plot_dates = pd.to_datetime(plot_dates)
+
+        # Plot quantile bands
+        colors_fill = ['#ff9999', '#ffb366', '#ffff99', '#ffb366', '#ff9999']
+        colors_line = ['#ff0000', '#ff6600', '#ffcc00', '#ff6600', '#ff0000']
+
+        # Plot the median (50th percentile) as the central line
+        median_idx = quantiles.index(0.5) if 0.5 in quantiles else len(quantiles)//2
+        median_q = quantiles[median_idx]
+        ax.plot(plot_dates, quantile_data[median_q],
+               color='darkred', linewidth=2.5, label='Median tc prediction', zorder=10)
+
+        # Plot quantile bands symmetrically
+        sorted_quantiles = sorted(quantiles)
+        mid_idx = len(sorted_quantiles) // 2
+
+        for i in range(mid_idx):
+            lower_q = sorted_quantiles[i]
+            upper_q = sorted_quantiles[-(i+1)]
+
+            if lower_q == upper_q:
+                continue
+
+            ax.fill_between(plot_dates,
+                           quantile_data[lower_q],
+                           quantile_data[upper_q],
+                           alpha=0.3,
+                           color=colors_fill[i],
+                           label=f'{int(lower_q*100)}%-{int(upper_q*100)}% quantile range')
+
+        # Plot individual quantile lines
+        for i, q in enumerate(sorted_quantiles):
+            if q != median_q:  # Don't redraw median
+                ax.plot(plot_dates, quantile_data[q],
+                       color=colors_line[min(i, len(colors_line)-1)],
+                       linewidth=1, alpha=0.7, linestyle='--')
+
+        # Add diagonal reference line (tc = observation date)
+        min_date = min(plot_dates.min(), min([min(v) for v in quantile_data.values()]))
+        max_date = max(plot_dates.max(), max([max(v) for v in quantile_data.values()]))
+        ax.plot([min_date, max_date], [min_date, max_date],
+               'k--', linewidth=1, alpha=0.5, label='Present (tc = observation date)')
+
+        # Formatting
+        ax.set_xlabel('Observation Date', fontsize=12, fontweight='bold')
+        ax.set_ylabel('Predicted Crash Date (tc)', fontsize=12, fontweight='bold')
+        ax.set_title('Quantile Ranges of Predicted Crash Dates\n' +
+                    'Shows distribution of tc predictions over time',
+                    fontsize=13, fontweight='bold')
+        ax.legend(loc='upper left', fontsize=9)
+        ax.grid(True, alpha=0.3)
+
+        # Rotate x-axis labels for better readability
+        plt.xticks(rotation=45, ha='right')
+
+        plt.tight_layout()
+
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"Saved: {save_path}")
+
+        plt.show()
+
+        return fig
+
     def export_results(self, output_path='bubble_diagnostic_results.csv'):
         """Export results to CSV"""
         if len(self.results) > 0:
@@ -613,34 +727,255 @@ class BubbleDiagnostic:
         print("\n" + "="*70)
 
 
+def demo_gold_platinum_quantile_analysis(data_path, window_days=504, step_days=21,
+                                         recent_years=None):
+    """
+    Comprehensive demonstration with gold and platinum data including quantile analysis
+
+    Args:
+        data_path: Path to CSV with 'Dates', 'Gold', 'Platinum' columns
+        window_days: Analysis window size in days (default: 504 = ~2 years)
+        step_days: Step size in days (default: 21 = ~1 month)
+        recent_years: If specified, only analyze last N years of data
+
+    Returns:
+        dict with detectors for both gold and platinum
+    """
+    print("="*80)
+    print("GOLD & PLATINUM BUBBLE ANALYSIS WITH QUANTILE CRASH DATE RANGES")
+    print("Based on Geraskin et al. methodology")
+    print("="*80)
+
+    # Load the combined data
+    df = pd.read_csv(data_path)
+
+    # Find date column (case insensitive)
+    date_col = None
+    for col in df.columns:
+        if col.lower() in ['date', 'dates', 'datetime', 'time']:
+            date_col = col
+            break
+
+    if date_col is None:
+        raise ValueError(f"Could not find date column. Found: {df.columns.tolist()}")
+
+    dates = pd.to_datetime(df[date_col])
+
+    # Filter to recent years if specified
+    if recent_years is not None:
+        cutoff = dates.max() - pd.Timedelta(days=recent_years*365)
+        mask = dates >= cutoff
+        dates = dates[mask].reset_index(drop=True)
+        df = df[mask].reset_index(drop=True)
+        print(f"\nFiltered to last {recent_years} years")
+
+    print(f"\nData range: {dates.min().strftime('%Y-%m-%d')} to {dates.max().strftime('%Y-%m-%d')}")
+    print(f"Total observations: {len(dates)}")
+
+    results = {}
+
+    # Analyze Gold
+    print("\n" + "="*80)
+    print("ANALYZING GOLD")
+    print("="*80)
+
+    if 'Gold' in df.columns:
+        gold_detector = BubbleDiagnostic(dates=dates, prices=df['Gold'].values)
+        gold_results = gold_detector.analyze(window_days=window_days, step_days=step_days)
+
+        if len(gold_results) > 0:
+            print("\nGenerating Gold diagnostic plots...")
+            gold_detector.plot_bubble_diagnostics(save_path='gold_bubble_diagnostic.png')
+
+            print("\nGenerating Gold quantile crash date analysis...")
+            gold_detector.plot_quantile_crash_dates(save_path='gold_quantile_crash_dates.png')
+
+            gold_detector.export_results('gold_bubble_results.csv')
+            gold_detector.print_summary()
+
+        results['gold'] = gold_detector
+
+    # Analyze Platinum
+    print("\n" + "="*80)
+    print("ANALYZING PLATINUM")
+    print("="*80)
+
+    if 'Platinum' in df.columns:
+        platinum_detector = BubbleDiagnostic(dates=dates, prices=df['Platinum'].values)
+        platinum_results = platinum_detector.analyze(window_days=window_days, step_days=step_days)
+
+        if len(platinum_results) > 0:
+            print("\nGenerating Platinum diagnostic plots...")
+            platinum_detector.plot_bubble_diagnostics(save_path='platinum_bubble_diagnostic.png')
+
+            print("\nGenerating Platinum quantile crash date analysis...")
+            platinum_detector.plot_quantile_crash_dates(save_path='platinum_quantile_crash_dates.png')
+
+            platinum_detector.export_results('platinum_bubble_results.csv')
+            platinum_detector.print_summary()
+
+        results['platinum'] = platinum_detector
+
+    # Create comparison plot
+    print("\n" + "="*80)
+    print("GENERATING COMPARATIVE QUANTILE ANALYSIS")
+    print("="*80)
+
+    if 'gold' in results and 'platinum' in results:
+        create_comparative_quantile_plot(results['gold'], results['platinum'],
+                                        label1='Gold', label2='Platinum',
+                                        save_path='gold_platinum_quantile_comparison.png')
+
+    print("\n" + "="*80)
+    print("ANALYSIS COMPLETE")
+    print("="*80)
+    print("\nGenerated files:")
+    print("  - gold_bubble_diagnostic.png")
+    print("  - gold_quantile_crash_dates.png")
+    print("  - gold_bubble_results.csv")
+    print("  - platinum_bubble_diagnostic.png")
+    print("  - platinum_quantile_crash_dates.png")
+    print("  - platinum_bubble_results.csv")
+    print("  - gold_platinum_quantile_comparison.png")
+
+    return results
+
+
+def create_comparative_quantile_plot(detector1, detector2, save_path=None,
+                                    label1='Asset 1', label2='Asset 2',
+                                    quantiles=[0.1, 0.25, 0.5, 0.75, 0.9]):
+    """
+    Create comparative quantile crash date plot for two assets
+
+    Args:
+        detector1: First BubbleDiagnostic instance (e.g., gold)
+        detector2: Second BubbleDiagnostic instance (e.g., platinum)
+        save_path: Path to save figure
+        label1: Label for first asset
+        label2: Label for second asset
+        quantiles: List of quantiles to plot
+    """
+    fig, axes = plt.subplots(2, 1, figsize=(14, 12), sharex=True)
+
+    for idx, (detector, label, ax) in enumerate([(detector1, label1, axes[0]),
+                                                   (detector2, label2, axes[1])]):
+        if len(detector.results) == 0:
+            ax.text(0.5, 0.5, f'No results for {label}',
+                   ha='center', va='center', transform=ax.transAxes)
+            continue
+
+        # Calculate quantile data
+        window_ends = sorted(detector.results['window_end'].unique())
+        quantile_data = {q: [] for q in quantiles}
+        plot_dates = []
+
+        for window_date in window_ends:
+            predictions = detector.results[detector.results['window_end'] <= window_date]
+            future_tc = predictions[predictions['tc_date'] > window_date]['tc_date']
+
+            if len(future_tc) >= 3:
+                days_to_tc = [(tc - window_date).days for tc in future_tc]
+                quantile_values = np.percentile(days_to_tc, [q*100 for q in quantiles])
+
+                plot_dates.append(window_date)
+                for i, q in enumerate(quantiles):
+                    tc_quantile = window_date + pd.Timedelta(days=float(quantile_values[i]))
+                    quantile_data[q].append(tc_quantile)
+
+        if len(plot_dates) == 0:
+            ax.text(0.5, 0.5, f'Not enough data for {label}',
+                   ha='center', va='center', transform=ax.transAxes)
+            continue
+
+        plot_dates = pd.to_datetime(plot_dates)
+
+        # Plot quantile bands
+        colors_fill = ['#ff9999', '#ffb366', '#ffff99', '#ffb366', '#ff9999']
+        colors_line = ['#ff0000', '#ff6600', '#ffcc00', '#ff6600', '#ff0000']
+
+        # Plot median
+        median_idx = quantiles.index(0.5) if 0.5 in quantiles else len(quantiles)//2
+        median_q = quantiles[median_idx]
+        ax.plot(plot_dates, quantile_data[median_q],
+               color='darkred', linewidth=2.5, label='Median tc', zorder=10)
+
+        # Plot quantile bands
+        sorted_quantiles = sorted(quantiles)
+        mid_idx = len(sorted_quantiles) // 2
+
+        for i in range(mid_idx):
+            lower_q = sorted_quantiles[i]
+            upper_q = sorted_quantiles[-(i+1)]
+
+            if lower_q != upper_q:
+                ax.fill_between(plot_dates,
+                               quantile_data[lower_q],
+                               quantile_data[upper_q],
+                               alpha=0.3,
+                               color=colors_fill[i],
+                               label=f'{int(lower_q*100)}%-{int(upper_q*100)}%')
+
+        # Plot individual quantile lines
+        for i, q in enumerate(sorted_quantiles):
+            if q != median_q:
+                ax.plot(plot_dates, quantile_data[q],
+                       color=colors_line[min(i, len(colors_line)-1)],
+                       linewidth=1, alpha=0.7, linestyle='--')
+
+        # Diagonal reference
+        min_date = min(plot_dates.min(), min([min(v) for v in quantile_data.values()]))
+        max_date = max(plot_dates.max(), max([max(v) for v in quantile_data.values()]))
+        ax.plot([min_date, max_date], [min_date, max_date],
+               'k--', linewidth=1, alpha=0.5, label='Present')
+
+        # Formatting
+        ax.set_ylabel('Predicted Crash Date (tc)', fontsize=11, fontweight='bold')
+        ax.set_title(f'{label} - Quantile Ranges of Predicted Crash Dates',
+                    fontsize=12, fontweight='bold')
+        ax.legend(loc='upper left', fontsize=8)
+        ax.grid(True, alpha=0.3)
+
+    axes[-1].set_xlabel('Observation Date', fontsize=11, fontweight='bold')
+    plt.xticks(rotation=45, ha='right')
+    plt.tight_layout()
+
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        print(f"Saved: {save_path}")
+
+    plt.show()
+
+    return fig
+
+
 def demo_gold_recent():
-    """Demonstrate with recent gold data"""
+    """Demonstrate with recent gold data (legacy function for backward compatibility)"""
     print("="*70)
     print("DEMO: Gold Market - Last 2 Years")
     print("="*70)
-    
+
     # This would load your full gold data and filter to last 2 years
     # For demo purposes, showing the structure
     detector = BubbleDiagnostic('gold_data.csv')  # CSV with Date, Price
-    
+
     # Filter to last 2 years
     cutoff = detector.dates.max() - pd.Timedelta(days=730)
     mask = detector.dates >= cutoff
     detector.dates = detector.dates[mask].reset_index(drop=True)
     detector.prices = detector.prices[mask]
-    
+
     # Analyze
     results = detector.analyze(window_days=504, step_days=21)
-    
+
     # Print summary
     detector.print_summary()
-    
+
     # Create diagnostic plots
     detector.plot_bubble_diagnostics(save_path='gold_bubble_diagnostic.png')
-    
+
     # Export results
     detector.export_results('gold_bubble_results.csv')
-    
+
     return detector
 
 
@@ -648,8 +983,20 @@ if __name__ == "__main__":
     # Example usage
     print("LPPLS Bubble Diagnostic System")
     print("="*70)
-    print("\nUsage:")
+    print("\nBasic Usage:")
     print("  detector = BubbleDiagnostic('your_data.csv')")
     print("  detector.analyze()")
     print("  detector.plot_bubble_diagnostics()")
+    print("  detector.plot_quantile_crash_dates()  # NEW: Quantile analysis")
     print("  detector.print_summary()")
+    print("\nGold & Platinum Demo:")
+    print("  # Run comprehensive analysis with quantile ranges")
+    print("  results = demo_gold_platinum_quantile_analysis('GoldPlatData.csv')")
+    print("  ")
+    print("  # Or analyze specific recent period:")
+    print("  results = demo_gold_platinum_quantile_analysis('GoldPlatData.csv', recent_years=5)")
+    print("\nComparative Analysis:")
+    print("  # Compare two assets side by side")
+    print("  create_comparative_quantile_plot(gold_detector, platinum_detector,")
+    print("                                   label1='Gold', label2='Platinum',")
+    print("                                   save_path='comparison.png')")
