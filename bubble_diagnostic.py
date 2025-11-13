@@ -61,9 +61,10 @@ class LPPLSFitter:
         Returns:
             dict with parameters and fit quality, or None if failed
         """
-        t = time_array
-        p = log_price_array
-        
+        # Convert to numpy arrays to support negative indexing
+        t = np.asarray(time_array)
+        p = np.asarray(log_price_array)
+
         # Parameter bounds
         tc_min = t[-1] + 1
         tc_max = t[-1] + 365
@@ -228,10 +229,10 @@ class BubbleDiagnostic:
             total_windows += 1
             
             # Extract window
-            t_window = time_numerical[i:window_end_idx]
-            p_window = log_prices[i:window_end_idx]
+            t_window = time_numerical[i:window_end_idx].values
+            p_window = log_prices[i:window_end_idx].values
             date_window_end = self.dates[window_end_idx - 1]
-            
+
             if len(t_window) < min_data_points:
                 continue
             
