@@ -211,7 +211,7 @@ class BubbleDiagnostic:
         print(f"  Step: {step_days} days")
         
         # Convert to numerical time
-        time_numerical = (self.dates - self.dates[0]).days.astype(float)
+        time_numerical = (self.dates - self.dates[0]).dt.days.astype(float)
         log_prices = np.log(self.prices)
         
         results = []
