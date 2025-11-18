@@ -760,3 +760,70 @@ def drawdown_allocator(psp_r, ghp_r, maxdd, m=3):
         peak_value = np.maximum(peak_value, account_value)
         w_history.iloc[step] = psp_w
     return w_history
+
+
+def compare_ticker_dataframes(df1, df2, date_col='Date', ticker_col='Ticker'):
+    """
+    Compare Ticker values between two dataframes by date.
+
+    Creates a new dataframe showing which tickers appear in one dataframe but not the other
+    for each unique date. This is useful for identifying differences in ticker coverage
+    between two datasets over time.
+
+    Args:
+        df1: First DataFrame with date and ticker columns
+        df2: Second DataFrame with date and ticker columns
+        date_col: Name of the date column (default: 'Date')
+        ticker_col: Name of the ticker column (default: 'Ticker')
+
+    Returns:
+        DataFrame with columns:
+        - Date: The date
+        - Tickers_in_df1_not_df2: List of tickers in df1 but not in df2
+        - Tickers_in_df2_not_df1: List of tickers in df2 but not in df1
+        - Count_only_in_df1: Number of tickers only in df1
+        - Count_only_in_df2: Number of tickers only in df2
+        - Count_in_both: Number of tickers in both dataframes
+
+    Example:
+        >>> df1 = pd.DataFrame({
+        ...     'Date': ['2024-01-01', '2024-01-02'],
+        ...     'Ticker': ['AAPL', 'GOOGL']
+        ... })
+        >>> df2 = pd.DataFrame({
+        ...     'Date': ['2024-01-01', '2024-01-02'],
+        ...     'Ticker': ['AAPL', 'MSFT']
+        ... })
+        >>> result = compare_ticker_dataframes(df1, df2)
+    """
+    # Ensure date columns are datetime
+    df1_copy = df1.copy()
+    df2_copy = df2.copy()
+    df1_copy[date_col] = pd.to_datetime(df1_copy[date_col])
+    df2_copy[date_col] = pd.to_datetime(df2_copy[date_col])
+
+    # Get unique dates from both dataframes
+    all_dates = pd.Series(pd.concat([df1_copy[date_col], df2_copy[date_col]]).unique()).sort_values()
+
+    results = []
+
+    for date in all_dates:
+        # Get tickers for this date from each dataframe
+        tickers_df1 = set(df1_copy[df1_copy[date_col] == date][ticker_col].dropna())
+        tickers_df2 = set(df2_copy[df2_copy[date_col] == date][ticker_col].dropna())
+
+        # Find differences
+        only_in_df1 = tickers_df1 - tickers_df2
+        only_in_df2 = tickers_df2 - tickers_df1
+        in_both = tickers_df1 & tickers_df2
+
+        results.append({
+            date_col: date,
+            'Tickers_in_df1_not_df2': sorted(list(only_in_df1)) if only_in_df1 else [],
+            'Tickers_in_df2_not_df1': sorted(list(only_in_df2)) if only_in_df2 else [],
+            'Count_only_in_df1': len(only_in_df1),
+            'Count_only_in_df2': len(only_in_df2),
+            'Count_in_both': len(in_both)
+        })
+
+    return pd.DataFrame(results)
