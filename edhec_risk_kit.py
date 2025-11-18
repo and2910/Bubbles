@@ -760,3 +760,74 @@ def drawdown_allocator(psp_r, ghp_r, maxdd, m=3):
         peak_value = np.maximum(peak_value, account_value)
         w_history.iloc[step] = psp_w
     return w_history
+
+
+def append_csv_files_by_date(file_list, file_path_template, output_columns,
+                              date_column='Date', date_format='%Y%m%d'):
+    """
+    Append multiple CSV files with proper date sorting and column matching.
+
+    This function reads multiple CSV files, concatenates them by matching column headers,
+    sorts by date, and returns a combined DataFrame.
+
+    Parameters:
+    -----------
+    file_list : list
+        List of file names to process
+    file_path_template : str
+        Path template with {} placeholder for file name (e.g., 'data/{}.csv')
+    output_columns : list
+        List of column names to extract from each CSV file
+    date_column : str, default='Date'
+        Name of the date column to sort by
+    date_format : str, default='%Y%m%d'
+        Format of the date column in the CSV files
+
+    Returns:
+    --------
+    pd.DataFrame
+        Combined DataFrame sorted by date with matched columns
+
+    Example:
+    --------
+    >>> files = ['file1', 'file2', 'file3']
+    >>> cols = ['Date', 'Ticker', 'TR_1M', 'Score', 'Quintile']
+    >>> df = append_csv_files_by_date(files, 'data/{}.csv', cols)
+    """
+    # Initialize empty DataFrame with specified columns
+    combined_df = pd.DataFrame(columns=output_columns)
+
+    # Store all dataframes to concatenate at once (more efficient)
+    df_list = []
+
+    for file in file_list:
+        try:
+            # Read CSV file
+            file_path = file_path_template.format(file)
+            data = pd.read_csv(file_path, thousands=',')
+
+            # Extract only the required columns
+            # Use .reindex to ensure columns are in the right order and missing columns are filled with NaN
+            new_data = data.reindex(columns=output_columns).copy()
+
+            # Convert date column to datetime
+            if date_column in new_data.columns:
+                # Handle both integer and string date formats
+                if new_data[date_column].dtype in ['int64', 'int32']:
+                    new_data[date_column] = new_data[date_column].astype(int)
+                new_data[date_column] = pd.to_datetime(new_data[date_column], format=date_format)
+
+            df_list.append(new_data)
+
+        except Exception as e:
+            print(f"Error processing file {file}: {e}")
+
+    # Concatenate all DataFrames at once (more efficient than iterative concat)
+    if df_list:
+        combined_df = pd.concat(df_list, axis=0, ignore_index=True)
+
+        # Sort by date to ensure chronological order
+        if date_column in combined_df.columns:
+            combined_df = combined_df.sort_values(by=[date_column]).reset_index(drop=True)
+
+    return combined_df
